@@ -120,7 +120,7 @@ class RabbitMQProducer(object):
         return self.set_publish_queue(message)
 
     def publish(self, message):
-        ## set message if set_message function
+        ## set message to set_message function
         ## can be override
         self.message = self.runner_set_message_function(self.message)
 
