@@ -59,6 +59,7 @@ class RabbitMQConsumer(object):
         # based on node_discovery_method
         self.connection = None
         self.channel = None
+        connected_node = None
         if self.node_discovery_method == 'priority':
             for item in self.nodes:
                 if self.connection == None and self.channel == None:
@@ -68,6 +69,8 @@ class RabbitMQConsumer(object):
                             pika.ConnectionParameters(host=item['host'], port=item['port'], credentials=self.credentials)
                         )
                         self.channel = self.connection.channel()
+                        # node connected successfully
+                        connected_node = item
                     except:
                         self.connection = None
                         self.channel = None
@@ -78,6 +81,8 @@ class RabbitMQConsumer(object):
         ## if there are no nodes active
         if self.connection == None and self.channel == None:
             raise Exception('All Nodes seems down or unreachable')
+        else:
+            return connected_node
     
     ## Override this method
     def on_message(self, ch, method, properties, body):
@@ -111,8 +116,8 @@ class RabbitMQConsumer(object):
     def consume(self, queue=''):
         active = True
         while active:
-            print('retry to connect')
-            self.set_node() # choose nodes to connect
+            # print('retry to connect')
+            self.connected_node = self.set_node() # choose nodes to connect
 
             ## declare queue 
             # (if queue is an empty string, queue will be generate as random)
@@ -133,12 +138,18 @@ class RabbitMQConsumer(object):
             
             ## start consuming
             try:
-                self.channel.basic_consume(
+                self.consumer_tag = self.channel.basic_consume(
                     queue=self.consume_queue,
                     on_message_callback=self.callback,
                     auto_ack=True
                 )
-                print('start consuming queue {0}'.format(self.consume_queue))
+
+                ## print consumer information
+                print('start consuming')
+                print('consumer information:')
+                print('consumer_tag: {0}'.format(self.consumer_tag))
+                print('consumed queue: {0}'.format(self.consume_queue))
+                print('connected node: {0}:{1}'.format(self.connected_node['host'], self.connected_node['port']))
                 self.channel.start_consuming()
             except KeyboardInterrupt:
                 print('keyboard interrupt')
