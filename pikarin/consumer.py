@@ -30,7 +30,7 @@ class RabbitMQConsumer(object):
             else:
                 self.debug = False
 
-        ## check rabbitmq node_discovery_method
+        # check rabbitmq node_discovery_method
         if 'node_discovery_method' in config:
             self.node_discovery_method = config['node_discovery_method']
             if self.node_discovery_method == 'priority':
@@ -42,7 +42,7 @@ class RabbitMQConsumer(object):
         else:
             raise Exception('\'node_discovery_method\' is required on config')
 
-        ## check rabbitmq node
+        # check rabbitmq node
         if 'nodes' in config:
             if type(config['nodes']) != list:
                 raise Exception('\'nodes\' should list of dictionary')
@@ -55,12 +55,17 @@ class RabbitMQConsumer(object):
             raise Exception('\'nodes\' is required on config')
 
     def set_node(self):
-        # decide nodes to connect
-        # based on node_discovery_method
+        """
+        decide nodes to connect
+        based on node_discovery_method
+        """
         self.connection = None
         self.channel = None
         connected_node = None
+
         if self.node_discovery_method == 'priority':
+            # priority => try toconnect to every node from top to bottom
+            # of list of config nodes
             for item in self.nodes:
                 if self.connection == None and self.channel == None:
                     try:
@@ -76,9 +81,29 @@ class RabbitMQConsumer(object):
                         self.channel = None
 
         elif self.node_discovery_method == 'random':
-            pass
+            # random => connect randomly to every node
+            # node that failed to connect will not be connected twice
+            try_nodes = self.nodes
+            index_try_nodes = [*range(len(try_nodes))] # need index to remove item from list of dictionary
+            while self.connection == None and self.channel == None and len(try_nodes) > 0:
+                index_try_node = random.choice(index_try_nodes)
+                try_node = try_nodes[index_try_node]
+                try:
+                    self.credentials = pika.PlainCredentials(try_node['user'], try_node['password'])
+                    self.connection = pika.BlockingConnection(
+                        pika.ConnectionParameters(host=try_node['host'], port=try_node['port'], credentials=self.credentials)
+                    )
+                    self.channel = self.connection.channel()
+                    # node connected successfully
+                    connected_node = try_node
+                except:
+                    self.connection = None
+                    self.channel = None
+                    # remove node with failed connection from list
+                    try_nodes.pop(index_try_node)
+                    index_try_nodes = [*range(len(try_nodes))]
         
-        ## if there are no nodes active
+        # if there are no nodes active
         if self.connection == None and self.channel == None:
             raise Exception('All Nodes seems down or unreachable')
         else:
@@ -86,10 +111,17 @@ class RabbitMQConsumer(object):
     
     ## Override this method
     def on_message(self, ch, method, properties, body):
+        """
+        Method that will be called when consumer get message
+        """
         print('Please override on_message method on RabbitMQConsumer')
+        print('ch:')
         print(ch)
+        print('method:')
         print(method)
+        print('properties:')
         print(properties)
+        print('body:')
         print(body)
         return body
 
@@ -116,27 +148,34 @@ class RabbitMQConsumer(object):
     def consume(self, queue=''):
         active = True
         while active:
-            # print('retry to connect')
-            self.connected_node = self.set_node() # choose nodes to connect
+            self.connected_node = self.set_node() ## choose nodes to connect
+            print(self.connected_node)
 
-            ## declare queue 
+            # declare queue 
             # (if queue is an empty string, queue will be generate as random)
             try:
+                ## exclusive = True, so any consumer can connect
+                ## durable = False, so queue can be deleted
+                ## auto_delete = True, delete queue on consumer or node down, Because
+                ##              consumer cannot switch to another node if previous
+                ##              queue still exist
                 result = self.channel.queue_declare(queue=queue, 
                                                     exclusive=False, 
-                                                    durable=True)
+                                                    durable=False,
+                                                    auto_delete=True)
                 self.consume_queue = result.method.queue
             except:
-                # if nodes down the queue on that nodes
-                # cannot be accessible. The consumer should
-                # delete queue and recreate that queue
+                ## if a node down the queue on that node
+                ## cannot be accessible. The consumer should
+                ## delete queue and recreate that queue
                 self.channel.queue_delete(queue)
                 result = self.channel.queue_declare(queue=queue, 
                                                     exclusive=False, 
-                                                    durable=True)
+                                                    durable=True,
+                                                    auto_delete=True)
                 self.consume_queue = result.method.queue
             
-            ## start consuming
+            # start consuming
             try:
                 self.consumer_tag = self.channel.basic_consume(
                     queue=self.consume_queue,
@@ -151,6 +190,11 @@ class RabbitMQConsumer(object):
                 print('consumed queue: {0}'.format(self.consume_queue))
                 print('connected node: {0}:{1}'.format(self.connected_node['host'], self.connected_node['port']))
                 self.channel.start_consuming()
+            except pika.exceptions.ConnectionClosedByBroker:
+                # On node down
+                # retry to connect
+                print('node {0}:{1} seems down, try to connect to another node'.format(self.connected_node['host'], self.connected_node['port']))
+                continue
             except KeyboardInterrupt:
                 print('keyboard interrupt')
                 active = False
