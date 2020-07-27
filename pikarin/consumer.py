@@ -1,4 +1,5 @@
 import random
+import platform
 
 import requests
 import pika
@@ -84,7 +85,11 @@ class RabbitMQConsumer(object):
             # random => connect randomly to every node
             # node that failed to connect will not be connected twice
             try_nodes = self.nodes
-            index_try_nodes = [*range(len(try_nodes))] # need index to remove item from list of dictionary
+
+            index_try_nodes = [] # need index to remove item from list of dictionary
+            for x in range(len(try_nodes)):
+                index_try_nodes.append(x)
+
             while self.connection == None and self.channel == None and len(try_nodes) > 0:
                 index_try_node = random.choice(index_try_nodes)
                 try_node = try_nodes[index_try_node]
@@ -101,7 +106,10 @@ class RabbitMQConsumer(object):
                     self.channel = None
                     # remove node with failed connection from list
                     try_nodes.pop(index_try_node)
-                    index_try_nodes = [*range(len(try_nodes))]
+
+                    index_try_nodes = [] # need index to remove item from list of dictionary
+                    for x in range(len(try_nodes)):
+                        index_try_nodes.append(x)
         
         # if there are no nodes active
         if self.connection == None and self.channel == None:
