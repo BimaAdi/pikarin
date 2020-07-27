@@ -20,7 +20,9 @@ class RabbitMQProducer(object):
         else:
             self.verify_config(self.config)
 
-        self.set_node()
+        self.connected_node = self.set_node()
+        print('publish node: {0}:{1}'.format(self.connected_node['host'], self.connected_node['port']))
+
         # set rpc if defined
         if rpc != None:
             self.rpc = rpc
@@ -75,12 +77,18 @@ class RabbitMQProducer(object):
         else:
             raise Exception('\'nodes\' is required on config')
     
-    ## decide which nodes to connect
     def set_node(self):
-        ## based on node_discovery_method
+        """
+        decide nodes to connect
+        based on node_discovery_method
+        """
         self.connection = None
         self.channel = None
+        connected_node = None
+
         if self.node_discovery_method == 'priority':
+            # priority => try toconnect to every node from top to bottom
+            # of list of config nodes
             for item in self.nodes:
                 if self.connection == None and self.channel == None:
                     try:
@@ -89,16 +97,40 @@ class RabbitMQProducer(object):
                             pika.ConnectionParameters(host=item['host'], port=item['port'], credentials=self.credentials)
                         )
                         self.channel = self.connection.channel()
+                        # node connected successfully
+                        connected_node = item
                     except:
                         self.connection = None
                         self.channel = None
 
         elif self.node_discovery_method == 'random':
-            pass
+            # random => connect randomly to every node
+            # node that failed to connect will not be connected twice
+            try_nodes = self.nodes
+            index_try_nodes = [*range(len(try_nodes))] # need index to remove item from list of dictionary
+            while self.connection == None and self.channel == None and len(try_nodes) > 0:
+                index_try_node = random.choice(index_try_nodes)
+                try_node = try_nodes[index_try_node]
+                try:
+                    self.credentials = pika.PlainCredentials(try_node['user'], try_node['password'])
+                    self.connection = pika.BlockingConnection(
+                        pika.ConnectionParameters(host=try_node['host'], port=try_node['port'], credentials=self.credentials)
+                    )
+                    self.channel = self.connection.channel()
+                    # node connected successfully
+                    connected_node = try_node
+                except:
+                    self.connection = None
+                    self.channel = None
+                    # remove node with failed connection from list
+                    try_nodes.pop(index_try_node)
+                    index_try_nodes = [*range(len(try_nodes))]
         
         ## if there are no nodes active
         if self.connection == None and self.channel == None:
             raise Exception('All Nodes seems down or unreachable')
+        else:
+            return connected_node
 
     ## on_response for callback
     def on_response(self, ch, method, props, body):
@@ -120,7 +152,7 @@ class RabbitMQProducer(object):
         return self.set_publish_queue(message)
 
     def publish(self, message):
-        ## set message if set_message function
+        ## set message to set_message function
         ## can be override
         self.message = self.runner_set_message_function(self.message)
 
